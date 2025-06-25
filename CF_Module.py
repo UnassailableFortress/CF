@@ -15,7 +15,7 @@ from scipy.sparse import coo_matrix, csr_matrix
 import warnings
 warnings.filterwarnings('ignore')
 
-class EnhancedItemToItemRecommender:
+class FixedItemToItemRecommender:
     def __init__(self, k=30, similarity_method='cosine', min_similarity=0.001, 
                  min_interactions=2, implicit_feedback=True):
         """

@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from CF_Module import EnhancedItemToItemRecommender, EnhancedEvaluator
+from CF_Module import FixedItemToItemRecommender, FixedEvaluator
 from Dataloader import create_efficient_dataloader
 import gzip
 import json
@@ -91,19 +91,22 @@ def run_enhanced_evaluation(data_path=None, sample_size=DEFAULT_SAMPLE_SIZE, top
         if len(df) > sample_size:
             df = df.sample(n=sample_size, random_state=DEFAULT_RANDOM_STATE)
             print(f"Sampled {sample_size} records from {len(df)} total")
+        
         df = preprocess_data(df)
         if df.empty or len(df) < 100:
             raise ValueError("Dataset too small after preprocessing.")
-        train_df, test_df = EnhancedEvaluator.leave_one_out_split(df)
+        
+        # Use the correct method name from FixedEvaluator
+        train_df, test_df = FixedEvaluator.gentle_train_test_split(df, min_train_interactions=2)
         print(f"Train size: {len(train_df)}, Test size: {len(test_df)}")
     except Exception as e:
         print(f"Error in data loading/preprocessing: {e}")
         return
 
     param_grid = [
-        {"similarity_method": "cosine", "n_components": 30, "time_decay": False},
-        {"similarity_method": "adjusted_cosine", "n_components": 50, "time_decay": True},
-        {"similarity_method": "svd", "n_components": 100, "time_decay": False},
+        {"similarity_method": "cosine", "k": 20, "min_similarity": 0.001, "min_interactions": 1},
+        {"similarity_method": "cosine", "k": 30, "min_similarity": 0.001, "min_interactions": 2},
+        {"similarity_method": "jaccard", "k": 15, "min_similarity": 0.001, "min_interactions": 1},
     ]
 
     best_result = None
@@ -115,27 +118,36 @@ def run_enhanced_evaluation(data_path=None, sample_size=DEFAULT_SAMPLE_SIZE, top
         print(f"\nRunning config {i+1}/{len(param_grid)}: {params}")
 
         try:
-            model = EnhancedItemToItemRecommender(
-                k=20,
-                n_components=params["n_components"],
+            # Use FixedItemToItemRecommender instead of EnhancedItemToItemRecommender
+            model = FixedItemToItemRecommender(
+                k=params["k"],
                 similarity_method=params["similarity_method"],
-                time_decay=params["time_decay"],
+                min_similarity=params["min_similarity"],
+                min_interactions=params["min_interactions"],
                 implicit_feedback=True
             )
 
             model.fit(train_df, timestamp_col='timestamp', category_col='category')
-            results = EnhancedEvaluator.comprehensive_evaluation(model, train_df, test_df, k=top_k)
+            
+            # Use robust_evaluation from FixedEvaluator
+            results = FixedEvaluator.robust_evaluation(model, test_df, train_df, k=top_k)
 
             print("\nResults:")
             for metric, value in results.items():
-                print(f"{metric}: {value:.4f}")
+                if isinstance(value, (int, float)):
+                    print(f"{metric}: {value:.4f}")
+                else:
+                    print(f"{metric}: {value}")
 
-            if best_result is None or results[f"Recall@{top_k}"] > best_result[f"Recall@{top_k}"]:
+            # Compare based on F1 score (which is available in the results)
+            if best_result is None or results[f"F1@{top_k}"] > best_result[f"F1@{top_k}"]:
                 best_result = results
                 best_config = params
 
         except Exception as e:
             print(f"Error in configuration {i+1}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     print("\n" + "="*60)
@@ -149,11 +161,100 @@ def run_enhanced_evaluation(data_path=None, sample_size=DEFAULT_SAMPLE_SIZE, top
 
         print("\nBest Results:")
         for metric, value in best_result.items():
-            print(f"{metric}: {value:.4f}")
+            if isinstance(value, (int, float)):
+                print(f"{metric}: {value:.4f}")
+            else:
+                print(f"{metric}: {value}")
     else:
         print("No successful configurations found.")
 
+def run_chunked_evaluation(chunk_dir=None, top_k=DEFAULT_TOP_K):
+    """Run evaluation on individual chunks separately"""
+    if chunk_dir is None:
+        chunk_dir = "/home/zalert_rig305/Desktop/EE/Programs/Movies_and_TV_Split/"
+
+    if not os.path.exists(chunk_dir):
+        print(f"Error: Directory {chunk_dir} does not exist")
+        return
+
+    chunk_files = sorted(glob.glob(os.path.join(chunk_dir, "part*.json")))
+    if not chunk_files:
+        print(f"No chunk files found in {chunk_dir}")
+        return
+
+    print(f"Found {len(chunk_files)} chunk files")
+    
+    all_results = []
+
+    for i, file_path in enumerate(chunk_files):
+        print(f"\n==== Processing Chunk {i+1}/{len(chunk_files)}: {os.path.basename(file_path)} ====")
+
+        try:
+            # Load chunk
+            df = pd.read_json(file_path, lines=True)
+            df = df.rename(columns={
+                'reviewerID': 'user_id',
+                'asin': 'item_id',
+                'overall': 'rating',
+                'unixReviewTime': 'timestamp'
+            })
+            df['category'] = 'Movies_and_TV'
+            
+            # Preprocess
+            df = preprocess_data(df)
+            if df.empty or len(df) < 100:
+                print("Chunk too small after preprocessing, skipping.")
+                continue
+            
+            # Split data
+            train_df, test_df = FixedEvaluator.gentle_train_test_split(df)
+            
+            if len(test_df) == 0:
+                print("No test data available for this chunk, skipping.")
+                continue
+                
+            print(f"Chunk {i+1} - Train: {len(train_df)}, Test: {len(test_df)}")
+            
+            # Train model
+            model = FixedItemToItemRecommender(
+                k=20,
+                similarity_method='cosine',
+                min_similarity=0.001,
+                min_interactions=1,
+                implicit_feedback=True
+            )
+            
+            model.fit(train_df, timestamp_col='timestamp', category_col='category')
+            results = FixedEvaluator.robust_evaluation(model, test_df, train_df, k=top_k)
+            
+            print(f"\nChunk {i+1} Results:")
+            for metric, value in results.items():
+                if isinstance(value, (int, float)):
+                    print(f"{metric}: {value:.4f}")
+                else:
+                    print(f"{metric}: {value}")
+                    
+            all_results.append(results)
+            
+        except Exception as e:
+            print(f"Error processing chunk {file_path}: {e}")
+            continue
+
+    # Summarize results across all chunks
+    if all_results:
+        print("\n==== SUMMARY ACROSS ALL CHUNKS ====")
+        metric_names = list(all_results[0].keys())
+        
+        for metric in metric_names:
+            if isinstance(all_results[0][metric], (int, float)):
+                values = [r[metric] for r in all_results if metric in r]
+                if values:
+                    avg_value = np.mean(values)
+                    std_value = np.std(values)
+                    print(f"{metric}: {avg_value:.4f} (±{std_value:.4f})")
+
 def run_continuous_training_across_chunks(chunk_dir=None, top_k=DEFAULT_TOP_K):
+    """Accumulate data from chunks and train on combined dataset"""
     if chunk_dir is None:
         chunk_dir = "/home/zalert_rig305/Desktop/EE/Programs/Movies_and_TV_Split/"
 
@@ -197,23 +298,26 @@ def run_continuous_training_across_chunks(chunk_dir=None, top_k=DEFAULT_TOP_K):
     full_df = pd.concat(combined_df, ignore_index=True)
     print(f"\nCombined dataset shape: {full_df.shape}")
 
-    train_df, test_df = EnhancedEvaluator.leave_one_out_split(full_df)
+    train_df, test_df = FixedEvaluator.gentle_train_test_split(full_df)
     print(f"Train interactions: {len(train_df)} | Test interactions: {len(test_df)}")
 
-    model = EnhancedItemToItemRecommender(
+    model = FixedItemToItemRecommender(
         k=20,
-        n_components=50,
         similarity_method='cosine',
-        time_decay=False,
+        min_similarity=0.001,
+        min_interactions=1,
         implicit_feedback=True
     )
 
     model.fit(train_df, timestamp_col='timestamp', category_col='category')
-    results = EnhancedEvaluator.comprehensive_evaluation(model, train_df, test_df, k=top_k)
+    results = FixedEvaluator.robust_evaluation(model, test_df, train_df, k=top_k)
 
     print("\n==== FINAL EVALUATION ON COMBINED DATA ====")
     for metric, value in results.items():
-        print(f"{metric}: {value:.4f}")
+        if isinstance(value, (int, float)):
+            print(f"{metric}: {value:.4f}")
+        else:
+            print(f"{metric}: {value}")
 
 if __name__ == "__main__":
     import argparse
