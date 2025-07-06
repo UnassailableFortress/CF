@@ -540,7 +540,7 @@ if __name__ == "__main__":
         print("\nCF Dataloader is ready for use!")
     
     # For file-based loading
-    file_path = '/home/zalert_rig305/Desktop/EE/Programs/Movies_and_TV.json.gz'
+    file_path = '/home/zalert_rig305/Desktop/EE/Clothing_Shoes_and_Jewelry.json.gz'
     if os.path.exists(file_path):
         print(f"\nCreating dataloader from file: {file_path}")
         file_dataloader = create_efficient_dataloader(
