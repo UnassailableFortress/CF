@@ -275,7 +275,7 @@ def print_sample_recommendations(model, train_df, test_df):
 def run_ensemble_evaluation(data_path=None, sample_size=DEFAULT_SAMPLE_SIZE):
     """Run ensemble of multiple CF approaches"""
     if data_path is None:
-        data_path = "/home/zalert_rig305/Desktop/EE/Programs/Movies_and_TV.json.gz"
+        data_path = "/home/zalert_rig305/Desktop/EE/Programs/Clothing_Shoes_and_Jewelry.json.gz"
     
     print("="*60)
     print("ENSEMBLE CF EVALUATION")

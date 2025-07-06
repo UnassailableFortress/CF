@@ -95,7 +95,7 @@ class EnhancedItemToItemRecommender:
         print(f"Matrix shape: {self.user_item_matrix.shape}")
         print(f"Matrix density: {self.user_item_matrix.nnz / (self.user_item_matrix.shape[0] * self.user_item_matrix.shape[1]):.6f}")
         
-        # Create detailed user profiles
+        # Create detailed user s
         self._create_enhanced_user_profiles(df, user_col, item_col, timestamp_col)
         
         # Build item co-occurrence matrix
@@ -414,30 +414,34 @@ class EnhancedItemToItemRecommender:
         return sim_dict
 
     def _compute_enhanced_popularity(self, df, item_col, timestamp_col):
-        """Compute popularity with temporal decay"""
         item_counts = df[item_col].value_counts()
         total_interactions = len(df)
-        
+
         self.item_popularity = {}
-        
+
         # If we have timestamps, weight recent interactions more
         if timestamp_col and timestamp_col in df.columns and hasattr(self, 'time_weights'):
             for item in item_counts.index:
                 item_data = df[df[item_col] == item]
-                weighted_count = item_data.index.map(self.time_weights).sum()
+
+                # ✅ FIX: Convert Index.map to Series before summing
+                weights = item_data.index.map(lambda idx: self.time_weights.get(idx, 1.0))
+                weighted_count = pd.Series(weights).sum()
+
                 self.item_popularity[item] = weighted_count / total_interactions
         else:
             for item, count in item_counts.items():
                 self.item_popularity[item] = count / total_interactions
-        
+
         # Get diverse popular items
         sorted_items = sorted(self.item_popularity.items(), key=lambda x: x[1], reverse=True)
-        
+
         # Take top items but ensure diversity
         n_popular = min(100, int(len(sorted_items) * 0.3))
         self.popular_items = [item for item, _ in sorted_items[:n_popular]]
-        
+
         print(f"Computed popularity for {len(self.item_popularity)} items")
+
 
     def recommend_items(self, user_history, top_n=10, user_id=None, diversity_factor=0.2):
         """Enhanced recommendation with multiple strategies"""
@@ -696,7 +700,7 @@ def load_reviews_from_json_gz(path):
 def run_enhanced_evaluation(data_path=None, sample_size=100000, k_values=[5, 10, 20]):
     """Main evaluation function with enhanced model"""
     if data_path is None:
-        data_path = "/home/zalert_rig305/Desktop/EE/Programs/Movies_and_TV.json.gz"
+        data_path = "/home/zalert_rig305/Desktop/EE/Programs/Clothing_Shoes_and_Jewelry.json.gz"
 
     print("="*60)
     print("ENHANCED COLLABORATIVE FILTERING EVALUATION")
